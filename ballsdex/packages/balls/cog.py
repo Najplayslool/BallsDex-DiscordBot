@@ -2,6 +2,7 @@ import enum
 import logging
 from typing import TYPE_CHECKING
 
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -345,6 +346,56 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         pages = Pages(source=source, interaction=interaction, compact=True)
         await pages.start()
 
+
+    @app_commands.command()
+    @app_commands.checks.cooldown(1, 60, key=lambda i: i.user.id)
+    async def rarity(
+        self,
+        interaction: discord.Interaction,
+        reverse: bool = False,
+    ):
+        """
+        Show the rarity list of players
+
+        Parameters
+        ----------
+        reverse: bool
+            Whether to show the rarity list in reverse
+        """
+
+        # Filter enabled collectibles
+        enabledCollectibles = [x for x in balls.values() if x.enabled]
+
+        # Group collectibles by rarity
+        rarityToCollectibles = {}
+        for collectible in enabledCollectibles:
+            rarity = collectible.rarity
+            if rarity not in rarityToCollectibles:
+                rarityToCollectibles[rarity] = []
+            rarityToCollectibles[rarity].append(collectible)
+
+        # Sort the rarityToCollectibles dictionary by rarity
+        sortedRarities = sorted(rarityToCollectibles.keys(), reverse=reverse)
+    
+        # Display collectibles grouped by rarity
+        entries = []
+        for rarity in sortedRarities:
+            collectible_names = "\n".join(
+                [
+                    f"\u200b ⋄ {c.country}"
+                    for c in rarityToCollectibles[rarity]
+                ]
+            )
+            entry = (f"★ Rarity: {rarity}", f"{collectible_names}")
+            entries.append(entry)
+
+        per_page = 5 
+        source = FieldPageSource(entries, per_page=per_page, inline=False, clear_description=False)
+        source.embed.title = f"Rarity List:"
+        discord.Colour.green()
+        pages = Pages(source=source, interaction=interaction, compact=False)
+        await pages.start()       
+
     @app_commands.command()
     @app_commands.checks.cooldown(1, 5, key=lambda i: i.user.id)
     async def info(
@@ -369,6 +420,7 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         content, file = await countryball.prepare_for_message(interaction)
         await interaction.followup.send(content=content, file=file)
         file.close()
+
 
     @app_commands.command()
     @app_commands.checks.cooldown(1, 60, key=lambda i: i.user.id)
