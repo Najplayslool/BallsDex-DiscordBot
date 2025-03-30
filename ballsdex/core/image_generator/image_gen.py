@@ -32,7 +32,7 @@ artwork_size = [b - a for a, b in zip(*CORNERS)]
 # use the "--help" flag to view all options.
 
 title_font = ImageFont.truetype(str(SOURCES_PATH / "LEMONMILK-Bold.otf"), 140)
-capacity_name_font = ImageFont.truetype(str(SOURCES_PATH / "Sandra.ttf"), 110)
+capacity_name_font = ImageFont.truetype(str(SOURCES_PATH / "Akira Jimbo.ttf"), 110)
 capacity_description_font = ImageFont.truetype(str(SOURCES_PATH / "TypoGraphica_demo.otf"), 60)
 stats_font = ImageFont.truetype(str(SOURCES_PATH / "TypoGraphica_demo.otf"), 130)
 credits_font = ImageFont.truetype(str(SOURCES_PATH / "demarunregular-ovpgo.ttf"), 40)
