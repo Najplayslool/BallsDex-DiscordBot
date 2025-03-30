@@ -116,7 +116,7 @@ def draw_card(ball_instance: "BallInstance", media_path: str = "./admin_panel/me
         # If you don't want to receive a DMCA, just don't
         "Property & Licensed by El Laggron\n" f"Owners: Priftox,Shadoko,Alfie",
         font=credits_font,
-        fill=(0, 0, 0, 0),
+        fill=(230, 230, 230, 255),
         stroke_width=0,
         stroke_fill=(255, 255, 255, 255),
     )
