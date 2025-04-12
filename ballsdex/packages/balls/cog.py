@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, cast
 
 
 import discord
+from discord import Interaction
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import Button, View, button
@@ -716,15 +717,29 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
             countryball.description(short=True, include_emoji=True, bot=self.bot, is_trade=True)
             + f" (`{countryball.attack_bonus:+}%/{countryball.health_bonus:+}%`)"
         )
+
+        # Create the embed
+        embed = discord.Embed(
+            title=f"{settings.collectible_name} Given",
+            description=cb_txt,
+            color=discord.Color.green()  # You can adjust the color to your liking
+        )
+
+        # Add more fields to the embed if needed
+        embed.add_field(name="Recipient", value=f"{user.mention}", inline=True)
+        embed.add_field(name="Sender", value=f"{interaction.user.mention}", inline=True)
+
+        # If it's a favorite, use the appropriate mention
         if favorite:
             await interaction.followup.send(
-                f"{interaction.user.mention}, you just gave the "
-                f"{settings.collectible_name} {cb_txt} to {user.mention}!",
+                embed=embed,
+                content=f"{interaction.user.mention}, you just gave the {settings.collectible_name}!",
                 allowed_mentions=discord.AllowedMentions(users=new_player.can_be_mentioned),
             )
         else:
             await interaction.followup.send(
-                f"You just gave the {settings.collectible_name} {cb_txt} to {user.mention}!",
+                embed=embed,
+                content=f"You just gave the {settings.collectible_name}!",
                 allowed_mentions=discord.AllowedMentions(users=new_player.can_be_mentioned),
             )
         await countryball.unlock()

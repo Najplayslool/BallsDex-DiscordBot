@@ -246,11 +246,31 @@ class Balls(app_commands.Group):
             ),
             special=special,
         )
-        await interaction.followup.send(
-            f"`{countryball.country}` {settings.collectible_name} was successfully given to "
+
+        # Create the embed
+        cb_txt = (
+            f"{countryball.country} {settings.collectible_name} was successfully given to "
             f"`{user}`.\nSpecial: `{special.name if special else None}` • ATK: "
-            f"`{instance.attack_bonus:+d}` • HP:`{instance.health_bonus:+d}` "
+            f"`{instance.attack_bonus:+d}` • HP: `{instance.health_bonus:+d}`"
         )
+
+        embed = discord.Embed(
+            title=f"{settings.collectible_name} Given",
+            description=cb_txt,
+            color=discord.Color.green()
+        )
+
+        # Send the message to the sender (interaction user)
+        await interaction.followup.send(embed=embed)
+
+        # Send the message to the user who received the ball
+        await user.send(
+            embed=embed,
+            content=f"Hey {user.mention}, you've received a new {settings.collectible_name} "
+                    f"from {interaction.user.mention}!"
+        )
+
+        # Log the action
         await log_action(
             f"{interaction.user} gave {settings.collectible_name} "
             f"{countryball.country} to {user}. (Special={special.name if special else None} "
