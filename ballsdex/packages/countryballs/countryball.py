@@ -206,11 +206,15 @@ class BallSpawnView(View):
         extension = self.model.wild_card.split(".")[-1]
         file_location = "./admin_panel/media/" + self.model.wild_card
         file_name = f"nt_{generate_random_name()}.{extension}"
+        spawn_msg = [
+            f"A unknown {settings.collectible_name} appeared, catch it before it's to late!",
+            f"Looks like a random {settings.collectible_name} has spawned!",
+            f"Oh wow, a wild {settings.collectible_name} appeared!"]
         try:
             permissions = channel.permissions_for(channel.guild.me)
             if permissions.attach_files and permissions.send_messages:
                 self.message = await channel.send(
-                    f"A wild {settings.collectible_name} appeared!",
+                    f"{random.choice(spawn_msg)}",
                     view=self,
                     file=discord.File(file_location, filename=file_name),
                 )
