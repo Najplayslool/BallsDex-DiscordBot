@@ -45,17 +45,16 @@ def get_credit_color(image: Image.Image, region: tuple) -> tuple:
     brightness = sum(image.convert("L").getdata()) / image.width / image.height  # type: ignore
     return (0, 0, 0, 255) if brightness > 100 else (255, 255, 255, 255)
 
-
 def draw_card(
     ball_instance: "BallInstance",
     media_path: str = "./admin_panel/media/",
 ) -> tuple[Image.Image, dict[str, Any]]:
+def draw_card(ball_instance: "BallInstance", media_path: str = "./admin_panel/media/"):
     ball = ball_instance.countryball
     ball_health = (237, 115, 101, 255)
     ball_credits = ball.credits
-    card_name = ball.cached_regime.name
+    
     if special_image := ball_instance.special_card:
-        card_name = getattr(ball_instance.specialcard, "name", card_name)
         image = Image.open(media_path + special_image)
         if ball_instance.specialcard and ball_instance.specialcard.credits:
             ball_credits += f" • {ball_instance.specialcard.credits}"
