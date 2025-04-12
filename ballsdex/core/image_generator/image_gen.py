@@ -44,11 +44,8 @@ def get_credit_color(image: Image.Image, region: tuple) -> tuple:
     image = image.crop(region)
     brightness = sum(image.convert("L").getdata()) / image.width / image.height  # type: ignore
     return (0, 0, 0, 255) if brightness > 100 else (255, 255, 255, 255)
+    
 
-def draw_card(
-    ball_instance: "BallInstance",
-    media_path: str = "./admin_panel/media/",
-) -> tuple[Image.Image, dict[str, Any]]:
 def draw_card(ball_instance: "BallInstance", media_path: str = "./admin_panel/media/"):
     ball = ball_instance.countryball
     ball_health = (237, 115, 101, 255)
