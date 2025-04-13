@@ -263,11 +263,17 @@ class Balls(app_commands.Group):
         # Send the message to the sender (interaction user)
         await interaction.followup.send(embed=embed)
 
+        content, file, view = await instance.prepare_for_message(interaction)
+
+        embed.set_image(url="attachment://" + file.filename)
+
         # Send the message to the user who received the ball
         await user.send(
-            embed=embed,
             content=f"Hey {user.mention}, you've received a new {settings.collectible_name} "
-                    f"from {interaction.user.mention}!"
+                    f"from {interaction.user.mention}!",
+            embed=embed,
+            file=file,
+            view=view
         )
 
         # Log the action
