@@ -38,7 +38,7 @@ last_daily_times = {}
 # Cooldowns
 DAILY_COOLDOWN = timedelta(hours=24)
 
-class Claim(commands.GroupCog, group_name="players"):
+class Claim(commands.Cog):
     """
     a little simple daily pack!
     """
