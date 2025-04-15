@@ -3,7 +3,9 @@ from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta
 import random
-import ballsdex
+from tortoise import models, fields
+import logging
+logger = logging.getLogger(__name__)
 from ballsdex.core.utils.transformers import (
     BallTransform,
     SpecialTransform,
@@ -18,12 +20,12 @@ from ballsdex.core.models import (
     Player,
     Trade,
     TradeObject,
-    Special
+    Special,
 )
 from ballsdex.settings import settings
 from ballsdex.core.bot import BallsDexBot
 import ballsdex.packages.config.components as Components
-from typing import TYPE_CHECKING, cast
+from collections import defaultdict
 
 # Credits
 # -------
@@ -34,24 +36,31 @@ from typing import TYPE_CHECKING, cast
 
 # Track last claim times
 last_daily_times = {}
+wallet_balance = defaultdict(int)
+packly_pool = defaultdict(int)
+
+# Owners who can give packs
+ownersid = {
+    1096501882224136222,
+    767663084890226689,
+    749658746535280771
+}
 
 # Cooldowns
 DAILY_COOLDOWN = timedelta(hours=24)
 
 class Claim(commands.Cog):
     """
-    a little simple daily pack!
+    A little simple daily pack!
     """
 
-    def __init__(self, bot: "BallsDexBot"):
+    def __init__(self, bot: BallsDexBot):
         self.bot = bot
 
-    async def get_random_ball(self):
-        count = await Ball.all().count()
-        if count == 0:
-            return None
-        offset = random.randint(0, count - 1)
-        return await Ball.all().offset(offset).first()
+    async def get_random_ball(self) -> Ball | None:
+        roll = random.uniform(0.01, 30.0)
+        ball = await Ball.filter(rarity__gte=roll).order_by("rarity").first()
+        return ball
 
     @app_commands.command(name="daily", description="Claim your daily Footballer!")
     async def daily(self, interaction: discord.Interaction[BallsDexBot]):
@@ -82,7 +91,6 @@ class Claim(commands.Cog):
         )
 
         emoji = self.bot.get_emoji(ball.emoji_id)
-
         color_choice = random.choice([
             discord.Color.from_rgb(229, 255, 0),
             discord.Color.from_rgb(255, 0, 0),
@@ -98,19 +106,193 @@ class Claim(commands.Cog):
             value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
         )
 
-
-        # Generate card image
         content, file, view = await instance.prepare_for_message(interaction)
-
-        # Attach the image to the embed
         embed.set_image(url="attachment://" + file.filename)
         embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
         embed.set_footer(text="Come back in 24 hours for your next claim! • Made by drift")
 
+        await interaction.response.send_message(embed=embed, file=file, view=view)
+        file.close()
 
-        # Send the embed with the attached file
-        await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=False)
+        # ✅ Log the daily pack grant to a specific channel and the bot's logger
+        log_channel_id = 1361522228021297404  # <- Replace with your logging channel ID
+        log_channel = self.bot.get_channel(log_channel_id)
+        account_created = interaction.user.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
+        if log_channel:
+            await log_channel.send(
+                f"**{interaction.user.mention}** claimed a daily pack and got **{ball.country}**\n"
+                f"• Rarity: `{ball.rarity}` 💖 `{instance.attack_bonus}` ⚽ `{instance.health_bonus}`\n"
+                f"• Account created: `{account_created}`"
+            )
+
+        logger.info(
+            f"[DAILY PACK] {interaction.user} ({interaction.user.id}) received {ball.country} "
+            f"(Rarity: {ball.rarity}) | Account created: {account_created}"
+        )
+
+        last_daily_times[user_id] = datetime.now()
+
+    @app_commands.command(name="owner-daily", description="Claim your daily Footballer!")
+    async def ownerdaily(self, interaction: discord.Interaction[BallsDexBot]):
+        user_id = str(interaction.user.id)
+        username = interaction.user.name
+
+        if interaction.user.id not in ownersid:
+            await interaction.response.send_message(
+                "❌ You’re not allowed to use this command.", ephemeral=True)
+            return
+
+        player, _ = await Player.get_or_create(discord_id=user_id)
+        ball = await self.get_random_ball()
+        if not ball:
+            await interaction.response.send_message("No balls are available.", ephemeral=True)
+            return
+
+        instance = await BallInstance.create(
+            ball=ball,
+            player=player,
+            attack_bonus=random.randint(-20, 20),
+            health_bonus=random.randint(-20, 20),
+        )
+
+        emoji = self.bot.get_emoji(ball.emoji_id)
+        color_choice = random.choice([
+            discord.Color.from_rgb(229, 255, 0),
+            discord.Color.from_rgb(255, 0, 0),
+            discord.Color.from_rgb(0, 17, 255)
+        ])
+
+        embed = discord.Embed(
+            title=f"{username}'s Daily Pack!",
+            description=f"You received **{ball.country}**!",
+            color=color_choice
+        )
+        embed.add_field(
+            name=f"{emoji} **{ball.country}** (Rarity: {ball.rarity})",
+            value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
+        )
+
+        content, file, view = await instance.prepare_for_message(interaction)
+        embed.set_image(url="attachment://" + file.filename)
+        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+        embed.set_footer(text="Come back in 24 hours for your next claim! • Made by drift")
+
+        await interaction.response.send_message(embed=embed, file=file, view=view)
         file.close()
 
         last_daily_times[user_id] = datetime.now()
+
+
+    # Main /packly command to claim a ball after using a pack
+    @app_commands.command(name="packly", description="Claim your ball from the packly!")
+    async def packly(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        
+        # Ensure user starts with 1 pack if no balance is set
+        if user_id not in wallet_balance:
+            wallet_balance[user_id] = 1  # Initialize with 1 pack
+
+        # Check if the user has enough packs to claim
+        if wallet_balance[user_id] < 1:
+            await interaction.response.send_message(
+                "You don't have enough packs!",
+                ephemeral=True
+            )
+            return
+
+        # Deduct 1 pack from user's wallet for claiming a ball
+        wallet_balance[user_id] -= 1
+
+        # Assign a random ball to the user
+        ball = await self.get_random_ball()  # Assume this method fetches a random ball
+        if not ball:
+            await interaction.response.send_message("No balls are available.", ephemeral=True)
+            return
+
+        # Create an instance of the ball for the user
+        player, _ = await Player.get_or_create(discord_id=user_id)
+        instance = await BallInstance.create(
+            ball=ball,
+            player=player,
+            attack_bonus=random.randint(-20, 20),
+            health_bonus=random.randint(-20, 20),
+        )
+
+        emoji = self.bot.get_emoji(ball.emoji_id)
+        color_choice = random.choice([discord.Color.from_rgb(229, 255, 0),
+                                      discord.Color.from_rgb(255, 0, 0),
+                                      discord.Color.from_rgb(0, 17, 255)])
+
+        embed = discord.Embed(
+            title=f"{interaction.user.name}'s Packly Claim!",
+            description=f"You received **{ball.country}**!",
+            color=color_choice
+        )
+        embed.add_field(
+            name=f"{emoji} **{ball.country}** (Rarity: {ball.rarity})",
+            value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
+        )
+
+        # Attach the image of the ball to the embed
+        content, file, view = await instance.prepare_for_message(interaction)
+        embed.set_image(url="attachment://" + file.filename)
+        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+        embed.set_footer(text="Made by drift")
+
+        await interaction.response.send_message(embed=embed, file=file, view=view)
+        file.close()
+    
+    # Command to add packs to a user's wallet
+    @app_commands.command(name="packly_add", description="Add packs to another user's wallet")
+    async def packly_add(self, interaction: discord.Interaction, user: discord.User, packs: int):
+        user_id = str(interaction.user.id)
+        username = interaction.user.name
+
+        # Check if the user issuing the command is allowed to add packs
+        if interaction.user.id not in ownersid:
+            await interaction.response.send_message(
+                "You are not allowed to add packly's to other people or youself ❌",
+                ephemeral=True
+            )
+            return
+
+        # Ensure the target user has a wallet entry
+        target_user_id = str(user.id)
+        if target_user_id not in wallet_balance:
+            wallet_balance[target_user_id] = 1  # Initialize with 1 pack if no balance exists
+
+        # Add packs to the target user's wallet
+        wallet_balance[target_user_id] += packs
+
+        embed = discord.Embed(
+            title="FootballDex Packs Added!",
+            description=(
+                f"{interaction.user.mention} has added **{packs}** pack(s) to {user.mention}'s wallet.\n"
+                f"🪙 **{user.name}'s New Balance**: `{wallet_balance[target_user_id]} packs`"
+            ),
+            color=discord.Color.green()
+        )
+        embed.set_footer(text="Packly System • Made by drift")
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        await interaction.response.send_message(embed=embed)
+
+    # Command to check wallet balance
+    @app_commands.command(name="wallet", description="Check your wallet balance")
+    async def wallet(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        username = interaction.user.name
+        
+        # Get the user's pack balance (defaults to 0 if they haven't added any packs)
+        balance = wallet_balance.get(user_id, 0)
+        
+        embed = discord.Embed(
+            title=f"{username}'s Wallet",
+            description=f"You currently have **{balance}** pack(s).",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text="Made by drift")
+        
+        # Send the wallet balance as an embed
+        await interaction.response.send_message(embed=embed, ephemeral=False)
