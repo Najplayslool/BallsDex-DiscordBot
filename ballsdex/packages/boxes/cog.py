@@ -36,6 +36,7 @@ from collections import defaultdict
 
 # Track last claim times
 last_daily_times = {}
+last_weekly_times = {}
 wallet_balance = defaultdict(int)
 packly_pool = defaultdict(int)
 
@@ -48,19 +49,74 @@ ownersid = {
 
 # Cooldowns
 DAILY_COOLDOWN = timedelta(hours=24)
+WEEKLY_COOLDOWN = timedelta(days=7)
 
-class Claim(commands.Cog):
+
+class Claim(commands.GroupCog, name="packs"):
     """
     A little simple daily pack!
     """
 
     def __init__(self, bot: BallsDexBot):
         self.bot = bot
+        super().__init__()
 
-    async def get_random_ball(self) -> Ball | None:
-        roll = random.uniform(0.01, 30.0)
-        ball = await Ball.filter(rarity__gte=roll).order_by("rarity").first()
-        return ball
+    async def get_random_ball(self, player: Player) -> Ball | None:
+        owned_ids = await BallInstance.filter(player=player).values_list("ball_id", flat=True)
+        all_balls = await Ball.filter(rarity__gte=5.0, rarity__lte=30.0).all()
+
+        if not all_balls:
+            return None
+
+        # Weight unowned balls higher
+        weighted_choices = []
+        for ball in all_balls:
+            if ball.id in owned_ids:
+                # Already owned — add fewer times (e.g. 1 weight)
+                weighted_choices.append((ball, 1))
+            else:
+                # Not owned — higher chance (e.g. 5 weight)
+                weighted_choices.append((ball, 5))
+
+        # Flatten the weighted list
+        choices = []
+        for ball, weight in weighted_choices:
+            choices.extend([ball] * weight)
+
+        if not choices:
+            return None
+
+        return random.choice(choices)
+
+
+    async def getdasigmaballmate(self, player: Player) -> Ball | None:
+        owned_ids = await BallInstance.filter(player=player).values_list("ball_id", flat=True)
+        all_balls = await Ball.filter(rarity__gte=0.1, rarity__lte=5.0).all()
+
+        if not all_balls:
+            return None
+
+        # Weight unowned balls higher
+        weighted_choices = []
+        for ball in all_balls:
+            if ball.id in owned_ids:
+                # Already owned — add fewer times (e.g. 1 weight)
+                weighted_choices.append((ball, 1))
+            else:
+                # Not owned — higher chance (e.g. 5 weight)
+                weighted_choices.append((ball, 5))
+
+        # Flatten the weighted list
+        choices = []
+        for ball, weight in weighted_choices:
+            choices.extend([ball] * weight)
+
+        if not choices:
+            return None
+
+        return random.choice(choices)
+
+
 
     @app_commands.command(name="daily", description="Claim your daily Footballer!")
     async def daily(self, interaction: discord.Interaction[BallsDexBot]):
@@ -77,8 +133,9 @@ class Claim(commands.Cog):
                 )
                 return
 
-        player, _ = await Player.get_or_create(discord_id=user_id)
-        ball = await self.get_random_ball()
+        player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
+        ball = await self.get_random_ball(player)
+
         if not ball:
             await interaction.response.send_message("No balls are available.", ephemeral=True)
             return
@@ -133,18 +190,30 @@ class Claim(commands.Cog):
 
         last_daily_times[user_id] = datetime.now()
 
-    @app_commands.command(name="owner-daily", description="Claim your daily Footballer!")
-    async def ownerdaily(self, interaction: discord.Interaction[BallsDexBot]):
+
+    @app_commands.command(name="weekly", description="Claim your weekly Footballer!")
+    async def weekly(self, interaction: discord.Interaction[BallsDexBot]):
         user_id = str(interaction.user.id)
         username = interaction.user.name
 
-        if interaction.user.id not in ownersid:
-            await interaction.response.send_message(
-                "❌ You’re not allowed to use this command.", ephemeral=True)
-            return
+        now = datetime.now()
+        last_claim = last_weekly_times.get(user_id)
 
-        player, _ = await Player.get_or_create(discord_id=user_id)
-        ball = await self.get_random_ball()
+        if last_claim:
+            time_since_last = now - last_claim
+            if time_since_last < WEEKLY_COOLDOWN:
+                remaining = WEEKLY_COOLDOWN - time_since_last
+                hours, remainder = divmod(int(remaining.total_seconds()), 3600)
+                minutes, _ = divmod(remainder, 60)
+                await interaction.response.send_message(
+                    f"You must wait **{hours}h {minutes}m** before claiming your next weekly reward! • Made by drift",
+                    ephemeral=True
+                )
+                return
+
+        player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
+        ball = await self.getdasigmaballmate(player)
+
         if not ball:
             await interaction.response.send_message("No balls are available.", ephemeral=True)
             return
@@ -162,9 +231,8 @@ class Claim(commands.Cog):
             discord.Color.from_rgb(255, 0, 0),
             discord.Color.from_rgb(0, 17, 255)
         ])
-
         embed = discord.Embed(
-            title=f"{username}'s Daily Pack!",
+            title=f"{username}'s Weekly Pack!",
             description=f"You received **{ball.country}**!",
             color=color_choice
         )
@@ -176,12 +244,33 @@ class Claim(commands.Cog):
         content, file, view = await instance.prepare_for_message(interaction)
         embed.set_image(url="attachment://" + file.filename)
         embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Come back in 24 hours for your next claim! • Made by drift")
+        embed.set_footer(text="Come back in 7 days for your next claim! • Made by drift")
 
         await interaction.response.send_message(embed=embed, file=file, view=view)
         file.close()
 
-        last_daily_times[user_id] = datetime.now()
+        last_weekly_times[user_id] = now
+
+        # ✅ Log the weekly pack grant to a specific channel and the bot's logger
+        log_channel_id = 1361522228021297404  # <- Replace with your logging channel ID
+        log_channel = self.bot.get_channel(log_channel_id)
+        account_created = interaction.user.created_at.strftime("%Y-%m-%d %H:%M:%S")
+
+        if log_channel:
+            await log_channel.send(
+                f"**{interaction.user.mention}** claimed a Weekly pack and got **{ball.country}**\n"
+                f"• Rarity: `{ball.rarity}` 💖 `{instance.attack_bonus}` ⚽ `{instance.health_bonus}`\n"
+                f"• Account created: `{account_created}`"
+            )
+
+        logger.info(
+            f"[WEEKLY PACK] {interaction.user} ({interaction.user.id}) received {ball.country} "
+            f"(Rarity: {ball.rarity}) | Account created: {account_created}"
+        )
+
+
+
+        last_weekly_times[user_id] = datetime.now()
 
 
     # Main /packly command to claim a ball after using a pack
@@ -205,13 +294,14 @@ class Claim(commands.Cog):
         wallet_balance[user_id] -= 1
 
         # Assign a random ball to the user
-        ball = await self.get_random_ball()  # Assume this method fetches a random ball
+        player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
+        ball = await self.get_random_ball(player)
+
         if not ball:
             await interaction.response.send_message("No balls are available.", ephemeral=True)
             return
 
         # Create an instance of the ball for the user
-        player, _ = await Player.get_or_create(discord_id=user_id)
         instance = await BallInstance.create(
             ball=ball,
             player=player,
@@ -242,6 +332,80 @@ class Claim(commands.Cog):
 
         await interaction.response.send_message(embed=embed, file=file, view=view)
         file.close()
+
+        # Main /multipackly command to claim multiple balls after using multiple packs
+    @app_commands.command(name="multipackly", description="Claim multiple footballers from the multipackly!")
+    @app_commands.describe(packs="Number of packs to open (1-5)")
+    async def multipackly(self, interaction: discord.Interaction, packs: int):
+        user_id = str(interaction.user.id)
+
+        # Ensure user starts with 1 pack if no balance is set
+        if user_id not in wallet_balance:
+            wallet_balance[user_id] = 1  # Initialize with 1 pack
+
+        # Check if the user has enough packs to claim the selected number
+        if packs < 1 or packs > 5:
+            await interaction.response.send_message(
+                "You can only open between 1 and 5 packs!",
+                ephemeral=True
+            )
+            return
+
+        if wallet_balance[user_id] < packs:
+            await interaction.response.send_message(
+                "You don't have enough packs!",
+                ephemeral=True
+            )
+            return
+
+        # Deduct the selected number of packs from user's wallet for claiming balls
+        wallet_balance[user_id] -= packs
+
+        # Prepare the response embed
+        embed = discord.Embed(
+            title=f"{interaction.user.name}'s Multipackly Claim!",
+            description=f"You received **{packs}** footballers from your packs!",
+            color=discord.Color.random()
+        )
+
+        files = []
+
+        for _ in range(packs):
+            # Assign a random ball to the user
+            player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
+            ball = await self.get_random_ball(player)
+
+            if not ball:
+                await interaction.response.send_message("No balls are available.", ephemeral=True)
+                return
+
+            # Create an instance of the ball for the user
+            instance = await BallInstance.create(
+                ball=ball,
+                player=player,
+                attack_bonus=random.randint(-20, 20),
+                health_bonus=random.randint(-20, 20),
+            )
+
+            emoji = self.bot.get_emoji(ball.emoji_id)
+            color_choice = random.choice([discord.Color.from_rgb(229, 255, 0),
+                                        discord.Color.from_rgb(255, 0, 0),
+                                        discord.Color.from_rgb(0, 17, 255)])
+
+            # Add each ball claim to the embed
+            embed.add_field(
+                name=f"{emoji} **{ball.country}** (Rarity: {ball.rarity})",
+                value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
+            )
+
+
+        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+        embed.set_footer(text="Made by drift")
+
+        await interaction.response.send_message(embed=embed, files=files)
+        for file in files:
+            file.close()
+
     
     # Command to add packs to a user's wallet
     @app_commands.command(name="packly_add", description="Add packs to another user's wallet")
