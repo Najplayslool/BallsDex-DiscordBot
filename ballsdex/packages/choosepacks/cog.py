@@ -72,7 +72,7 @@ class ChoosePack(commands.GroupCog, name="pick"):
         # Shuffle and grab 3 random balls
         random.shuffle(balls)
         if len(balls) < 3:
-            await interaction.response.send_message("Not enough valid balls available to choose from.", ephemeral=True)
+            await interaction.response.send_message("Not enough valid footballers available to choose from.", ephemeral=True)
             return
         selected = random.sample(balls, 3)
 
@@ -80,7 +80,7 @@ class ChoosePack(commands.GroupCog, name="pick"):
         choices = [(ball, random.randint(1, 10), random.randint(1, 10)) for ball in selected]
 
         embed = discord.Embed(
-            title="Choose a Ball!",
+            title="Choose a Footballer!",
             description="Pick one of the following options:",
             color=discord.Color.gold(),
         )
