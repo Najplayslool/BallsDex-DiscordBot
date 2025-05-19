@@ -131,8 +131,8 @@ def draw_card(ball_instance: "BallInstance", media_path: str = "./admin_panel/me
     image.paste(ImageOps.fit(artwork, artwork_size), CORNERS[0])  # type: ignore
 
     if icon:
-        icon = ImageOps.fit(icon, (192, 192))
-        image.paste(icon, (1200, 30), mask=icon)
+        icon = ImageOps.fit(icon, (170, 170))
+        image.paste(icon, (1142, 1030), mask=icon)
         icon.close()
     artwork.close()
 

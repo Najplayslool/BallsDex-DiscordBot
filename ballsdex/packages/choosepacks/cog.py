@@ -8,7 +8,7 @@ from random import sample
 from ballsdex.core.models import Ball, BallInstance
 from ballsdex.core.models import Player
 
-AUTHORIZED_GIVERS = {767663084890226689, 749658746535280771, 1096501882224136222}
+AUTHORIZED_GIVERS = {767663084890226689, 749658746535280771}
 
 def format_ball_embed_field(ball, atk, hp):
     emoji = f"<:{ball.country.lower()}:{ball.emoji_id}>" if ball.emoji_id else ""
@@ -68,7 +68,7 @@ class ChoosePack(commands.GroupCog, name="pick"):
         else:
             self.claimed_once.add(uid)
 
-        balls = await Ball.filter(rarity__gte=2.5, rarity__lte=30.0)
+        balls = await Ball.filter(rarity__gte=0.5, rarity__lte=30.0)
         # Shuffle and grab 3 random balls
         random.shuffle(balls)
         if len(balls) < 3:
@@ -103,7 +103,7 @@ class ChoosePack(commands.GroupCog, name="pick"):
         embed.description = f"You have **{picks}** pick(s) left."
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="add", description="Give someone more pick credits.")
+    @app_commands.command(name="add", description="Give someone more pick credits (Only owners can do this)")
     @app_commands.describe(user="User to give picks to", amount="Number of picks to add")
     async def add(self, interaction: discord.Interaction, user: discord.User, amount: int):
         if interaction.user.id not in AUTHORIZED_GIVERS:

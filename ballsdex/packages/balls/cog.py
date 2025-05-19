@@ -733,14 +733,14 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         if favorite:
             await interaction.followup.send(
                 embed=embed,
-                content=f"{interaction.user.mention}, you just gave the {settings.collectible_name}!",
-                allowed_mentions=discord.AllowedMentions(users=new_player.can_be_mentioned),
+                content=f"{interaction.user.mention} you just gave a {settings.collectible_name} to {user.mention}!",
+                allowed_mentions=discord.AllowedMentions(users=new_player.can_be_mentioned)
             )
         else:
             await interaction.followup.send(
                 embed=embed,
-                content=f"You just gave the {settings.collectible_name}!",
-                allowed_mentions=discord.AllowedMentions(users=new_player.can_be_mentioned),
+                content=f"{interaction.user.mention} you just gave a {settings.collectible_name} to {user.mention}!",
+                allowed_mentions=discord.AllowedMentions(users=new_player.can_be_mentioned)
             )
         await countryball.unlock()
 

@@ -1,9 +1,13 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
+from discord import Embed, Color, File
 from tortoise import models, fields
+from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont
+from discord.ui import View
+import asyncio
 import logging
 logger = logging.getLogger(__name__)
 from ballsdex.core.utils.transformers import (
@@ -26,6 +30,8 @@ from ballsdex.settings import settings
 from ballsdex.core.bot import BallsDexBot
 import ballsdex.packages.config.components as Components
 from collections import defaultdict
+from ballsdex.core.image_generator. image_gen import draw_card
+from io import BytesIO
 
 # Credits
 # -------
@@ -42,7 +48,6 @@ packly_pool = defaultdict(int)
 
 # Owners who can give packs
 ownersid = {
-    1096501882224136222,
     767663084890226689,
     749658746535280771
 }
@@ -50,6 +55,7 @@ ownersid = {
 # Cooldowns
 DAILY_COOLDOWN = timedelta(hours=24)
 WEEKLY_COOLDOWN = timedelta(days=7)
+gamble_cooldowns = {} 
 
 
 class Claim(commands.GroupCog, name="packs"):
@@ -59,11 +65,13 @@ class Claim(commands.GroupCog, name="packs"):
 
     def __init__(self, bot: BallsDexBot):
         self.bot = bot
+        self.bot_tutorial_seen = set()
+        self.bot_walletturorial_seen = set()
         super().__init__()
 
     async def get_random_ball(self, player: Player) -> Ball | None:
         owned_ids = await BallInstance.filter(player=player).values_list("ball_id", flat=True)
-        all_balls = await Ball.filter(rarity__gte=5.0, rarity__lte=30.0).all()
+        all_balls = await Ball.filter(rarity__gte=0.5, rarity__lte=30.0, enabled=True).all() # make sure you can only obtain enabled balls
 
         if not all_balls:
             return None
@@ -91,7 +99,7 @@ class Claim(commands.GroupCog, name="packs"):
 
     async def getdasigmaballmate(self, player: Player) -> Ball | None:
         owned_ids = await BallInstance.filter(player=player).values_list("ball_id", flat=True)
-        all_balls = await Ball.filter(rarity__gte=0.1, rarity__lte=5.0).all()
+        all_balls = await Ball.filter(rarity__gte=0.05, rarity__lte=5.0, enabled=True).all() # same with the get_random_balls
 
         if not all_balls:
             return None
@@ -119,25 +127,25 @@ class Claim(commands.GroupCog, name="packs"):
 
 
     @app_commands.command(name="daily", description="Claim your daily Footballer!")
+    @app_commands.checks.cooldown(1, 86400, key=lambda i: i.user.id)
     async def daily(self, interaction: discord.Interaction[BallsDexBot]):
         user_id = str(interaction.user.id)
         username = interaction.user.name
 
-        if user_id in last_daily_times:
-            last = last_daily_times[user_id]
-            if datetime.now() - last < DAILY_COOLDOWN:
-                remaining = DAILY_COOLDOWN - (datetime.now() - last)
-                await interaction.response.send_message(
-                    f"You must wait {remaining} before claiming your next daily reward! • Made by drift",
-                    ephemeral=True
-                )
-                return
+        min_creation = datetime.now(timezone.utc) - timedelta(days=14)
+        if interaction.user.created_at > min_creation:
+            await interaction.response.send_message(
+                "Your account must be at least 14 days old to use this command.",
+                ephemeral=True
+            )
+            return
 
-        player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
+        await interaction.response.defer()
+        player, _ = await Player.get_or_create(discord_id=str(user_id))
         ball = await self.get_random_ball(player)
 
         if not ball:
-            await interaction.response.send_message("No balls are available.", ephemeral=True)
+            await interaction.followup.send("No balls are available.", ephemeral=True)
             return
 
         instance = await BallInstance.create(
@@ -147,69 +155,73 @@ class Claim(commands.GroupCog, name="packs"):
             health_bonus=random.randint(-20, 20),
         )
 
-        emoji = self.bot.get_emoji(ball.emoji_id)
-        color_choice = random.choice([
-            discord.Color.from_rgb(229, 255, 0),
-            discord.Color.from_rgb(255, 0, 0),
-            discord.Color.from_rgb(0, 17, 255)
-        ])
-        embed = discord.Embed(
-            title=f"{username}'s Daily Pack!",
-            description=f"You received **{ball.country}**!",
-            color=color_choice
-        )
-        embed.add_field(
-            name=f"{emoji} **{ball.country}** (Rarity: {ball.rarity})",
-            value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
-        )
+        # Walkout starts here
+        walkout_embed = Embed(title="🎉 Daily Pack Opening...", color=Color.dark_gray())
+        walkout_embed.set_footer(text="Come back in 1 day for your next claim! • Made by drift")
+        msg = await interaction.followup.send(embed=walkout_embed)
 
+        await asyncio.sleep(1.5)
+        walkout_embed.description = f"✨ **Rarity:** `{ball.rarity}`"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        regime_name = ball.cached_regime.name if ball.cached_regime else "Unknown"
+        walkout_embed.description += f"\n💳 **Card:** **{regime_name}**"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        walkout_embed.description += f"\n💖 **Health:** `{instance.health}`\n⚽ **Attack:** `{instance.attack}`"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        walkout_embed.title = f"🎁 You got **{ball.country}**!"
+        walkout_embed.color = Color.gold()
+
+        # Generate image card
         content, file, view = await instance.prepare_for_message(interaction)
-        embed.set_image(url="attachment://" + file.filename)
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Come back in 24 hours for your next claim! • Made by drift")
+        walkout_embed.set_image(url="attachment://" + file.filename)
+        walkout_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
-        await interaction.response.send_message(embed=embed, file=file, view=view)
+        await msg.edit(embed=walkout_embed, attachments=[file], view=view)
         file.close()
 
-        # ✅ Log the daily pack grant to a specific channel and the bot's logger
+        # ✅ Log it
         log_channel_id = 1361522228021297404  # <- Replace with your logging channel ID
         log_channel = self.bot.get_channel(log_channel_id)
         account_created = interaction.user.created_at.strftime("%Y-%m-%d %H:%M:%S")
 
         if log_channel:
             await log_channel.send(
-                f"**{interaction.user.mention}** claimed a daily pack and got **{ball.country}**\n"
+                f"**{interaction.user.mention}** claimed a Daily pack and got **{ball.country}**\n"
                 f"• Rarity: `{ball.rarity}` 💖 `{instance.attack_bonus}` ⚽ `{instance.health_bonus}`\n"
+                f"• Footballer ID: `#{ball.pk:0X}`\n"
                 f"• Account created: `{account_created}`"
             )
 
         logger.info(
-            f"[DAILY PACK] {interaction.user} ({interaction.user.id}) received {ball.country} "
+            f"[WEEKLY PACK] {interaction.user} ({interaction.user.id}) received {ball.country} "
             f"(Rarity: {ball.rarity}) | Account created: {account_created}"
+            f"Footballer ID: `#{ball.pk:0X}`"
         )
-
-        last_daily_times[user_id] = datetime.now()
 
 
     @app_commands.command(name="weekly", description="Claim your weekly Footballer!")
+    @app_commands.checks.cooldown(1, 604800, key=lambda i: i.user.id)
     async def weekly(self, interaction: discord.Interaction[BallsDexBot]):
         user_id = str(interaction.user.id)
         username = interaction.user.name
 
+        min_creation = datetime.now(timezone.utc) - timedelta(days=14)
+        if interaction.user.created_at > min_creation:
+            await interaction.response.send_message(
+                "Your account must be at least 14 days old to use this command.",
+                ephemeral=True
+            )
+            return
+
         now = datetime.now()
         last_claim = last_weekly_times.get(user_id)
 
-        if last_claim:
-            time_since_last = now - last_claim
-            if time_since_last < WEEKLY_COOLDOWN:
-                remaining = WEEKLY_COOLDOWN - time_since_last
-                hours, remainder = divmod(int(remaining.total_seconds()), 3600)
-                minutes, _ = divmod(remainder, 60)
-                await interaction.response.send_message(
-                    f"You must wait **{hours}h {minutes}m** before claiming your next weekly reward! • Made by drift",
-                    ephemeral=True
-                )
-                return
 
         player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
         ball = await self.getdasigmaballmate(player)
@@ -225,31 +237,36 @@ class Claim(commands.GroupCog, name="packs"):
             health_bonus=random.randint(-20, 20),
         )
 
-        emoji = self.bot.get_emoji(ball.emoji_id)
-        color_choice = random.choice([
-            discord.Color.from_rgb(229, 255, 0),
-            discord.Color.from_rgb(255, 0, 0),
-            discord.Color.from_rgb(0, 17, 255)
-        ])
-        embed = discord.Embed(
-            title=f"{username}'s Weekly Pack!",
-            description=f"You received **{ball.country}**!",
-            color=color_choice
-        )
-        embed.add_field(
-            name=f"{emoji} **{ball.country}** (Rarity: {ball.rarity})",
-            value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
-        )
+        # Walkout-style embed animation
+        walkout_embed = discord.Embed(title="🎉 Weekly Pack Opening...", color=discord.Color.dark_gray())
+        walkout_embed.set_footer(text="Come back in 7 days for your next claim! • Made by drift")
+        await interaction.response.defer()
+        msg = await interaction.followup.send(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        walkout_embed.description = f"✨ **Rarity:** `{ball.rarity}`"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        regime_name = ball.cached_regime.name if ball.cached_regime else "Unknown"
+        walkout_embed.description += f"\n💳 **Card:** **{regime_name}**"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        walkout_embed.description += f"\n💖 **Health:** `{instance.health}`\n⚽ **Attack:** `{instance.attack}`"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        walkout_embed.title = f"🎁 You got **{ball.country} {ball.id}**!"
+        walkout_embed.color = discord.Color.from_rgb(229, 255, 0)  # You can randomize if you want
 
         content, file, view = await instance.prepare_for_message(interaction)
-        embed.set_image(url="attachment://" + file.filename)
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Come back in 7 days for your next claim! • Made by drift")
+        walkout_embed.set_image(url="attachment://" + file.filename)
+        walkout_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
-        await interaction.response.send_message(embed=embed, file=file, view=view)
+        await msg.edit(embed=walkout_embed, attachments=[file], view=view)
         file.close()
 
-        last_weekly_times[user_id] = now
 
         # ✅ Log the weekly pack grant to a specific channel and the bot's logger
         log_channel_id = 1361522228021297404  # <- Replace with your logging channel ID
@@ -260,23 +277,32 @@ class Claim(commands.GroupCog, name="packs"):
             await log_channel.send(
                 f"**{interaction.user.mention}** claimed a Weekly pack and got **{ball.country}**\n"
                 f"• Rarity: `{ball.rarity}` 💖 `{instance.attack_bonus}` ⚽ `{instance.health_bonus}`\n"
+                f"Footballer ID: `#{ball.pk:0X}`\n"
                 f"• Account created: `{account_created}`"
             )
 
         logger.info(
             f"[WEEKLY PACK] {interaction.user} ({interaction.user.id}) received {ball.country} "
             f"(Rarity: {ball.rarity}) | Account created: {account_created}"
+            f"Footballer ID: `#{ball.pk:0X}`"
         )
 
 
 
-        last_weekly_times[user_id] = datetime.now()
 
 
     # Main /packly command to claim a ball after using a pack
-    @app_commands.command(name="packly", description="Claim your ball from the packly!")
+    @app_commands.command(name="packly", description="Claim your footballer from the packly!")
     async def packly(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
+
+        min_creation = datetime.now(timezone.utc) - timedelta(days=14)
+        if interaction.user.created_at > min_creation:
+            await interaction.response.send_message(
+                "Your account must be at least 14 days old to use this command.",
+                ephemeral=True
+            )
+            return
         
         # Ensure user starts with 1 pack if no balance is set
         if user_id not in wallet_balance:
@@ -298,7 +324,7 @@ class Claim(commands.GroupCog, name="packs"):
         ball = await self.get_random_ball(player)
 
         if not ball:
-            await interaction.response.send_message("No balls are available.", ephemeral=True)
+            await interaction.response.send_message("No footballers are available.", ephemeral=True)
             return
 
         # Create an instance of the ball for the user
@@ -309,41 +335,55 @@ class Claim(commands.GroupCog, name="packs"):
             health_bonus=random.randint(-20, 20),
         )
 
-        emoji = self.bot.get_emoji(ball.emoji_id)
-        color_choice = random.choice([discord.Color.from_rgb(229, 255, 0),
-                                      discord.Color.from_rgb(255, 0, 0),
-                                      discord.Color.from_rgb(0, 17, 255)])
+        # Walkout-style embed animation
+        walkout_embed = discord.Embed(title="🎁 Opening Packly...", color=discord.Color.dark_gray())
+        walkout_embed.set_footer(text="Made by drift")
+        await interaction.response.defer()
+        msg = await interaction.followup.send(embed=walkout_embed)
 
-        embed = discord.Embed(
-            title=f"{interaction.user.name}'s Packly Claim!",
-            description=f"You received **{ball.country}**!",
-            color=color_choice
-        )
-        embed.add_field(
-            name=f"{emoji} **{ball.country}** (Rarity: {ball.rarity})",
-            value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
-        )
 
-        # Attach the image of the ball to the embed
+        await asyncio.sleep(1.5)
+        walkout_embed.description = f"✨ **Rarity:** `{ball.rarity}`"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        regime_name = ball.cached_regime.name if ball.cached_regime else "Unknown"
+        walkout_embed.description += f"\n💳 **Card:** **{regime_name}**"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        walkout_embed.description += f"\n💖 **Health:** `{instance.health}`\n⚽ **Attack:** `{instance.attack}`"
+        await msg.edit(embed=walkout_embed)
+
+        await asyncio.sleep(1.5)
+        walkout_embed.title = f"🎉 You claimed **{ball.country}** from Packly!"
+        walkout_embed.color = discord.Color.gold()
+
         content, file, view = await instance.prepare_for_message(interaction)
-        embed.set_image(url="attachment://" + file.filename)
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Made by drift")
+        walkout_embed.set_image(url="attachment://" + file.filename)
+        walkout_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
-        await interaction.response.send_message(embed=embed, file=file, view=view)
+        await msg.edit(embed=walkout_embed, attachments=[file], view=view)
         file.close()
 
-        # Main /multipackly command to claim multiple balls after using multiple packs
     @app_commands.command(name="multipackly", description="Claim multiple footballers from the multipackly!")
     @app_commands.describe(packs="Number of packs to open (1-5)")
     async def multipackly(self, interaction: discord.Interaction, packs: int):
         user_id = str(interaction.user.id)
 
+        min_creation = datetime.now(timezone.utc) - timedelta(days=14)
+        if interaction.user.created_at > min_creation:
+            await interaction.response.send_message(
+                "Your account must be at least 14 days old to use this command.",
+                ephemeral=True
+            )
+            return
+
         # Ensure user starts with 1 pack if no balance is set
         if user_id not in wallet_balance:
-            wallet_balance[user_id] = 1  # Initialize with 1 pack
+            wallet_balance[user_id] = 1
 
-        # Check if the user has enough packs to claim the selected number
+        # Validate pack number
         if packs < 1 or packs > 5:
             await interaction.response.send_message(
                 "You can only open between 1 and 5 packs!",
@@ -358,58 +398,75 @@ class Claim(commands.GroupCog, name="packs"):
             )
             return
 
-        # Deduct the selected number of packs from user's wallet for claiming balls
+        # Deduct packs
         wallet_balance[user_id] -= packs
 
-        # Prepare the response embed
-        embed = discord.Embed(
-            title=f"{interaction.user.name}'s Multipackly Claim!",
-            description=f"You received **{packs}** footballers from your packs!",
-            color=discord.Color.random()
+        # Create the first embed (opening animation)
+        first_embed = discord.Embed(
+            title="🎁 Opening Multipackly...",
+            description="Get ready to reveal your footballers!",
+            color=discord.Color.gold()
         )
+        first_embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        first_embed.set_footer(text="Made by drift")
 
-        files = []
+        # Send the first embed
+        await interaction.response.send_message(embed=first_embed)
+        message = await interaction.original_response()
 
+        pulled_balls = []
+
+        # Small pause to simulate animation
+        await asyncio.sleep(4)
+
+        # Reveal footballers one by one
         for _ in range(packs):
-            # Assign a random ball to the user
             player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
             ball = await self.get_random_ball(player)
 
             if not ball:
-                await interaction.response.send_message("No balls are available.", ephemeral=True)
+                await interaction.followup.send("No footballers are available.", ephemeral=True)
                 return
 
-            # Create an instance of the ball for the user
-            instance = await BallInstance.create(
-                ball=ball,
-                player=player,
-                attack_bonus=random.randint(-20, 20),
-                health_bonus=random.randint(-20, 20),
+            attack_bonus = random.randint(-20, 20)
+            health_bonus = random.randint(-20, 20)
+
+            # Create the walkout embed
+            walkout_embed = discord.Embed(
+                title=f"🏆 You pulled {ball.country}!",
+                description=f"**Rarity:** {ball.rarity}\n⚽ **Attack:** {attack_bonus}\n❤️ **Health:** {health_bonus}",
+                color=discord.Color.random()
             )
+            walkout_embed.set_thumbnail(url=interaction.user.display_avatar.url)
+            walkout_embed.set_footer(text="FootballDex Pack Opening")
 
-            emoji = self.bot.get_emoji(ball.emoji_id)
-            color_choice = random.choice([discord.Color.from_rgb(229, 255, 0),
-                                        discord.Color.from_rgb(255, 0, 0),
-                                        discord.Color.from_rgb(0, 17, 255)])
+            # Edit the message to show the walkout
+            await message.edit(embed=walkout_embed)
 
-            # Add each ball claim to the embed
-            embed.add_field(
-                name=f"{emoji} **{ball.country}** (Rarity: {ball.rarity})",
-                value=f"``💖 {instance.attack_bonus}`` ``⚽ {instance.health_bonus}``"
-            )
+            pulled_balls.append(ball.country)
+            balance = wallet_balance.get(user_id, 0)
 
+            await asyncio.sleep(2)  # Pause between each reveal
 
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Made by drift")
+        # Final message after all reveals
+        final_embed = discord.Embed(
+        title="🎉 All Footballers Revealed!",
+        description=(
+        f"Your Multi-Packly has been done!\n\n"
+        f"*Here is what you got in your multipackly:*\n"
+        f"**{', '.join(pulled_balls)}!**\n"
+        f"**New Packly Balance: {balance}**"
+        ),
+        color=discord.Color.green()
+)
+        final_embed.set_footer(text="Made by drift")
+        await message.edit(embed=final_embed)
 
-        await interaction.response.send_message(embed=embed, files=files)
-        for file in files:
-            file.close()
 
     
     # Command to add packs to a user's wallet
-    @app_commands.command(name="packly_add", description="Add packs to another user's wallet")
-    async def packly_add(self, interaction: discord.Interaction, user: discord.User, packs: int):
+    @app_commands.command(name="owners-add", description="Add packs to another user's wallet")
+    async def ownerspacklyadd(self, interaction: discord.Interaction, user: discord.User, packs: int):
         user_id = str(interaction.user.id)
         username = interaction.user.name
 
@@ -442,18 +499,135 @@ class Claim(commands.GroupCog, name="packs"):
 
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="gamblepack", description="Gamble your packlys for a chance to win double – or lose it all!")
+    @app_commands.describe(amount="How many packs to gamble (higher risk reduces win chance)")
+    async def gamblepack(self, interaction: discord.Interaction, amount: int = 1):
+        user_id = str(interaction.user.id)
+
+        min_creation = datetime.now(timezone.utc) - timedelta(days=14)
+        if interaction.user.created_at > min_creation:
+            await interaction.response.send_message(
+                "Your account must be at least 14 days old to use this command.",
+                ephemeral=True
+            )
+            return
+
+        # Show tutorial once per user
+        if user_id not in self.bot_tutorial_seen:
+            tutorial_embed = discord.Embed(
+                title="🎲 How to Gamble Your Packlys",
+                description=(
+                    "Use `/packs gamblepack <amount>` to risk your packlys.\n"
+                    "- Gamble at least 1 pack.\n"
+                    "- More packs gambled = lower chance to win.\n"
+                    "- Win doubles your packs risked.\n"
+                    "- Lose loses all gambled packs.\n"
+                    "- 12 hour cooldown between gambles.\n\n"
+                    "Good luck!"
+                ),
+                color=discord.Color.gold()
+            )
+            await interaction.response.send_message(embed=tutorial_embed, ephemeral=True)
+            self.bot_tutorial_seen.add(user_id)
+            return  # Stop here, so user reads tutorial first
+
+        if amount < 1:
+            await interaction.response.send_message("You must gamble at least 1 pack.", ephemeral=True)
+            return
+
+        # Cooldown check (12 hours)
+        now = datetime.utcnow()
+        last_used = gamble_cooldowns.get(user_id)
+        if last_used and now - last_used < timedelta(hours=12):
+            remaining = timedelta(hours=12) - (now - last_used)
+            hours, remainder = divmod(remaining.total_seconds(), 3600)
+            minutes = remainder // 60
+            await interaction.response.send_message(
+                f"⏳ You can gamble again in **{int(hours)}h {int(minutes)}m**.", ephemeral=True
+            )
+            return
+
+        # Ensure user has balance
+        if user_id not in wallet_balance:
+            wallet_balance[user_id] = 0
+
+        if wallet_balance[user_id] < amount:
+            await interaction.response.send_message("❌ You don't have enough packlys to gamble that many.", ephemeral=True)
+            return
+
+        # Deduct packs immediately
+        wallet_balance[user_id] -= amount
+
+        await interaction.response.defer()
+
+        # Initial suspense embed
+        suspense = discord.Embed(
+            title=f"🎲 Gambling {amount} packly{'s' if amount > 1 else ''}...",
+            description="Rolling the dice...",
+            color=discord.Color.dark_grey()
+        )
+        suspense.set_footer(text="Higher risk means lower odds... | Made by drift")
+        msg = await interaction.followup.send(embed=suspense)
+
+        await asyncio.sleep(2)
+
+        # Calculate win chance
+        win_chance = max(5, 50 - (amount * 5))  # floor at 5%
+        result = "win" if random.randint(1, 100) <= win_chance else "lose"
+
+        if result == "win":
+            reward = amount * 2
+            wallet_balance[user_id] += reward
+            suspense.title = f"🎉 You WON {reward} packlys!"
+            suspense.color = discord.Color.green()
+            suspense.description = f"Luck is on your side. You risked {amount}, and won {reward}!"
+        else:
+            suspense.title = f"💀 You LOST your {amount} packly{'s' if amount > 1 else ''}!"
+            suspense.color = discord.Color.red()
+            suspense.description = f"Bad luck... you lost all your gambled packs. Try again in 12 hours."
+
+        await msg.edit(embed=suspense)
+
+        # Optional log
+        log_channel_id = 1361522228021297404  # Replace if needed
+        log_channel = self.bot.get_channel(log_channel_id)
+        if log_channel:
+            await log_channel.send(
+                f"🎲 **{interaction.user.mention}** gambled `{amount}` packlys and **{result.upper()}**.\n"
+                f"🎯 Win chance: `{win_chance}%`\n"
+                f"📦 New balance: `{wallet_balance[user_id]}`"
+            )
+
     # Command to check wallet balance
     @app_commands.command(name="wallet", description="Check your wallet balance")
     async def wallet(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         username = interaction.user.name
+
+        # Show tutorial once per user
+        if user_id not in self.bot_walletturorial_seen:
+            tutorial_embed = discord.Embed(
+                title="Welcome To The Packlys Wallet Command!",
+                description=(
+                    "Use `/packs wallet` to check your packlys balance.\n"
+                    "- You start with 0 Packlys.\n"
+                    "- To get more packlys, you have to ask the owners of FootballDex to add them!\n"
+                    "- Join **[FootballDex](https://discord.gg/footballdex) to get free packlys!**\n"
+                    "- These packlys can be used for `/packs packlys` `/packs multipackly` and `/packs gamblepack`\n"
+                    "Enjoy!"
+                ),
+                color=discord.Color.gold()
+            )
+            await interaction.response.send_message(embed=tutorial_embed, ephemeral=True)
+            self.bot_walletturorial_seen.add(user_id)
+            return  # Stop here, so user reads tutorial first
         
         # Get the user's pack balance (defaults to 0 if they haven't added any packs)
         balance = wallet_balance.get(user_id, 0)
         
         embed = discord.Embed(
             title=f"{username}'s Wallet",
-            description=f"You currently have **{balance}** pack(s).",
+            description=f"You currently have **{balance}** packly(s).",
             color=discord.Color.green()
         )
         embed.set_footer(text="Made by drift")

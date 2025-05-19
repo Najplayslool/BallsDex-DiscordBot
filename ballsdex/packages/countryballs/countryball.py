@@ -24,6 +24,7 @@ from ballsdex.core.models import (
     specials,
 )
 from ballsdex.settings import settings
+from ballsdex.core.image_generator. image_gen import draw_card
 
 if TYPE_CHECKING:
     from ballsdex.core.bot import BallsDexBot
@@ -83,6 +84,31 @@ class CountryballNamePrompt(Modal, title=f"Catch this {settings.collectible_name
                 allowed_mentions=discord.AllowedMentions(users=player.can_be_mentioned),
                 ephemeral=False,
             )
+        total_balls = await BallInstance.filter(player=player).count()
+        instance = ball
+        if total_balls == 1:
+            tutorial_embed = discord.Embed(
+                title="📘 Welcome to FootballDex!",
+                description=(
+                    "You’ve just **caught** your first **Footballer!**\n\n"
+                    "Here’s what you can do next:\n"
+                    "• `/players completion` — View your collection\n"
+                    "• `/packs daily` — Get a 30.0 - 0.5 Footballer!\n"
+                    "• `/packs weekly` — Get a 5.0 - 0.5 Footballer!\n"
+                    "• `/players info` — See what your Footballer looks like!\n"
+                    "• `/packs packly — Pack a footballer to 30.0 - 0.5! \n\n"
+                    "Thanks for reading! to know more go join **[FootballDex](https://discord.gg/footballdex) \n\n\n**"
+                    "And by the way, here is what you Footballer looks like 😍"
+                ),
+                color=discord.Color.blurple()
+            )
+            tutorial_embed.set_thumbnail(url="attachment://" + self.view.model.wild_card)
+
+            content, file, view = await instance.prepare_for_message(interaction)
+            tutorial_embed.set_image(url="attachment://" + file.filename)
+            tutorial_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+
+            await interaction.followup.send(embed=tutorial_embed, file=file, ephemeral=True)
 
 
 class BallSpawnView(View):
@@ -140,7 +166,7 @@ class BallSpawnView(View):
         if self.ballinstance and not self.caught:
             await self.ballinstance.unlock()
 
-    @button(style=discord.ButtonStyle.primary, label="Catch me!")
+    @button(style=discord.ButtonStyle.primary, label="Catch me ⚽!")
     async def catch_button(self, interaction: discord.Interaction["BallsDexBot"], button: Button):
         if self.caught:
             await interaction.response.send_message("I was caught already!", ephemeral=True)
