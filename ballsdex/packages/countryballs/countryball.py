@@ -85,7 +85,6 @@ class CountryballNamePrompt(Modal, title=f"Catch this {settings.collectible_name
                 ephemeral=False,
             )
         total_balls = await BallInstance.filter(player=player).count()
-        instance = ball
         if total_balls == 1:
             tutorial_embed = discord.Embed(
                 title="📘 Welcome to FootballDex!",
@@ -102,7 +101,6 @@ class CountryballNamePrompt(Modal, title=f"Catch this {settings.collectible_name
                 ),
                 color=discord.Color.blurple()
             )
-            tutorial_embed.set_thumbnail(url="attachment://" + self.view.model.wild_card)
 
             content, file, view = await instance.prepare_for_message(interaction)
             tutorial_embed.set_image(url="attachment://" + file.filename)
@@ -166,7 +164,7 @@ class BallSpawnView(View):
         if self.ballinstance and not self.caught:
             await self.ballinstance.unlock()
 
-    @button(style=discord.ButtonStyle.primary, label="Catch me ⚽!")
+    @button(style=discord.ButtonStyle.primary, label="Catch Me ⚽")
     async def catch_button(self, interaction: discord.Interaction["BallsDexBot"], button: Button):
         if self.caught:
             await interaction.response.send_message("I was caught already!", ephemeral=True)

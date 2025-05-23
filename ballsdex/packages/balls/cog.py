@@ -5,15 +5,17 @@ from typing import TYPE_CHECKING, cast
 
 import discord
 from discord import Interaction
-from discord import app_commands
+from discord import app_commands, File
 from discord.ext import commands
 from discord.ui import Button, View, button
 from tortoise.exceptions import DoesNotExist
 from tortoise.functions import Count
 from datetime import datetime, timedelta
 import random
-from discord import Embed
-
+from discord import Embed, Color
+from pathlib import Path
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 
 from ballsdex.core.models import BallInstance, DonationPolicy, Player, Trade, TradeObject, balls
 from ballsdex.core.utils.buttons import ConfirmChoiceView
@@ -25,6 +27,7 @@ from ballsdex.core.utils.transformers import (
     SpecialEnabledTransform,
     TradeCommandType,
 )
+from ballsdex.core.image_generator. image_gen import draw_card
 from ballsdex.core.utils.utils import inventory_privacy, is_staff
 from ballsdex.packages.balls.countryballs_paginator import CountryballsViewer
 from ballsdex.settings import settings
@@ -115,9 +118,78 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
     """
     View and manage your countryballs collection.
     """
+    OVERLAY_DIR = Path(__file__).parent / "overlay"
 
     def __init__(self, bot: "BallsDexBot"):
         self.bot = bot
+        self.frame_memory = {}
+
+
+    async def apply_overlay(self, ball_instance: BallInstance, image_fp: BytesIO, overlay_filename: str) -> BytesIO:
+        overlay_path = self.OVERLAY_DIR / overlay_filename
+        overlay_img = Image.open(overlay_path).convert("RGBA")
+
+        # Regenerate the card using the draw_card function with the overlay
+        image, _ = draw_card(ball_instance, frame_overlay=overlay_img)
+
+        # Save to buffer
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
+        return buffer
+
+
+    @app_commands.command(name="frame")
+    @app_commands.describe(
+        countryball="The footballer to frame",
+        frame="Choose a frame overlay"
+    )
+    @app_commands.choices(frame=[
+        app_commands.Choice(name="Rainbow", value="rainbow_frame.png"),
+        app_commands.Choice(name="Sussy", value="awaken_zone_glow.png"),
+        app_commands.Choice(name="Neon", value="neon_frame.png"),
+        app_commands.Choice(name="Magure in Real Madrid", value="maguire_realmadrid.png"),
+        app_commands.Choice(name="Normal Evolution Card", value="EVOLUTIONSBASEDESIGN.png"),
+        app_commands.Choice(name="Cool Evolution Card", value="EVOLUTIONSUPGRADESDESIGN.png"),
+        app_commands.Choice(name="Shape Shifter Card", value="shapeshifterdesign.png"),
+        app_commands.Choice(name="PMO Card", value="PMOFRAME.png"),
+        app_commands.Choice(name="Classic Old Card", value="Classic_card_design.png"),
+    ])
+    @app_commands.checks.cooldown(1, 18000, key=lambda i: i.user.id)
+    async def frame(
+        self,
+        interaction: Interaction,
+        countryball: BallInstanceTransform,
+        frame: app_commands.Choice[str]
+    ):
+        """Apply a fancy frame overlay to your footballer."""
+
+        await interaction.response.defer()
+
+        self.frame_memory[countryball.id] = frame.value
+
+        # Load the overlay
+        overlay_path = self.OVERLAY_DIR / frame.value
+        overlay_img = Image.open(overlay_path).convert("RGBA")
+
+        # Generate the image with overlay
+        image, _ = draw_card(countryball, frame_overlay=overlay_img)
+
+        # Save to buffer
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0)
+
+        # Prepare Discord file and embed
+        file = File(fp=buffer, filename="framed_footballer.png")
+        embed = Embed(
+            title=f"{interaction.user.display_name}'s Footballer with {frame.name} Frame (Only visible in /players info)"
+        )
+        embed.set_image(url="attachment://framed_footballer.png")
+
+        await interaction.followup.send(embed=embed, file=file)
+
+
 
     @app_commands.command()
     @app_commands.checks.cooldown(1, 10, key=lambda i: i.user.id)
@@ -456,6 +528,7 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         interaction: discord.Interaction["BallsDexBot"],
         countryball: BallInstanceTransform,
         special: SpecialEnabledTransform | None = None,
+        title: str | None = None,
     ):
         """
         Display info from a specific countryball.
@@ -470,8 +543,42 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         if not countryball:
             return
         await interaction.response.defer(thinking=True)
-        content, file, view = await countryball.prepare_for_message(interaction)
-        await interaction.followup.send(content=content, file=file, view=view)
+
+        # Get embed content, image file, and view
+        content, original_file, view = await countryball.prepare_for_message(interaction)
+
+        # Read image bytes into buffer
+        original_file.fp.seek(0)
+        file_bytes = BytesIO(original_file.fp.read())
+        original_file.close()
+
+        frame_name = self.frame_memory.get(countryball.id)
+        if frame_name:
+            # Apply the frame overlay
+            framed_buffer = await self.apply_overlay(countryball, file_bytes, frame_name)
+            file = discord.File(fp=framed_buffer, filename="framed_footballer.png")
+            image_filename = "framed_footballer.png"
+        else:
+            # Use original image
+            file_bytes.seek(0)
+            file = discord.File(fp=file_bytes, filename="footballer.png")
+            image_filename = "footballer.png"
+
+        # Create embed
+        embed = Embed(
+            title=title or f"{countryball} — Footballer Info",
+            description=content or "",
+            color=Color(random.randint(0, 0xFFFFFF))
+        )
+        embed.set_image(url=f"attachment://{image_filename}")
+
+        await interaction.followup.send(
+            content=content,
+            embed=embed,
+            file=file,
+            view=view
+        )
+        # Close original file
         file.close()
 
 

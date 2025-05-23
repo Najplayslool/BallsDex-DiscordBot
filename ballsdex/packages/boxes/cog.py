@@ -32,6 +32,12 @@ import ballsdex.packages.config.components as Components
 from collections import defaultdict
 from ballsdex.core.image_generator. image_gen import draw_card
 from io import BytesIO
+from ballsdex.core.utils.transformers import (
+    BallEnabledTransform,
+    BallInstanceTransform,
+    SpecialEnabledTransform,
+    TradeCommandType,
+)
 
 # Credits
 # -------
@@ -70,26 +76,37 @@ class Claim(commands.GroupCog, name="packs"):
         super().__init__()
 
     async def get_random_ball(self, player: Player) -> Ball | None:
-        owned_ids = await BallInstance.filter(player=player).values_list("ball_id", flat=True)
-        all_balls = await Ball.filter(rarity__gte=0.5, rarity__lte=30.0, enabled=True).all() # make sure you can only obtain enabled balls
+        owned_ids = set(
+            await BallInstance.filter(player=player).values_list("ball__id", flat=True)
+        )
+        all_balls = await Ball.filter(rarity__gte=0.5, rarity__lte=30.0, enabled=True).all()
 
         if not all_balls:
             return None
 
-        # Weight unowned balls higher
         weighted_choices = []
         for ball in all_balls:
-            if ball.id in owned_ids:
-                # Already owned — add fewer times (e.g. 1 weight)
-                weighted_choices.append((ball, 1))
-            else:
-                # Not owned — higher chance (e.g. 5 weight)
-                weighted_choices.append((ball, 5))
+            # base weight based on ownership
+            base_weight = 1 if ball.id in owned_ids else 5
 
-        # Flatten the weighted list
+            # rarity weight according to your tiers
+            if 5.0 <= ball.rarity <= 30.0:
+                rarity_weight = 16  # common
+            elif 2.5 <= ball.rarity < 5.0:
+                rarity_weight = 6   # decent
+            elif 1.5 <= ball.rarity < 2.5:
+                rarity_weight = 3   # rare
+            elif 0.5 < ball.rarity < 1.5:
+                rarity_weight = 1   # very rare
+            else:  # ball.rarity == 0.5 exactly (very very rare)
+                rarity_weight = 0.2
+
+            final_weight = base_weight * rarity_weight
+            weighted_choices.append((ball, final_weight))
+
         choices = []
         for ball, weight in weighted_choices:
-            choices.extend([ball] * weight)
+            choices.extend([ball] * int(weight))
 
         if not choices:
             return None
@@ -98,26 +115,37 @@ class Claim(commands.GroupCog, name="packs"):
 
 
     async def getdasigmaballmate(self, player: Player) -> Ball | None:
-        owned_ids = await BallInstance.filter(player=player).values_list("ball_id", flat=True)
-        all_balls = await Ball.filter(rarity__gte=0.05, rarity__lte=5.0, enabled=True).all() # same with the get_random_balls
+        owned_ids = set(
+            await BallInstance.filter(player=player).values_list("ball__id", flat=True)
+        )
+        all_balls = await Ball.filter(rarity__gte=0.01, rarity__lte=5.0, enabled=True).all()
 
         if not all_balls:
             return None
 
-        # Weight unowned balls higher
         weighted_choices = []
         for ball in all_balls:
             if ball.id in owned_ids:
-                # Already owned — add fewer times (e.g. 1 weight)
-                weighted_choices.append((ball, 1))
+                base_weight = 1
             else:
-                # Not owned — higher chance (e.g. 5 weight)
-                weighted_choices.append((ball, 5))
+                base_weight = 5
 
-        # Flatten the weighted list
+            # Explicit rarity weighting
+            if ball.rarity >= 4.5:  # very common
+                rarity_weight = 9
+            elif ball.rarity >= 1.5:  # common
+                rarity_weight = 5
+            elif ball.rarity >= 0.5:  # uncommon
+                rarity_weight = 2
+            else:  # rare (below 0.5 rarity)
+                rarity_weight = 0.2
+
+            final_weight = base_weight * rarity_weight
+            weighted_choices.append((ball, final_weight))
+
         choices = []
         for ball, weight in weighted_choices:
-            choices.extend([ball] * weight)
+            choices.extend([ball] * int(weight))
 
         if not choices:
             return None
@@ -293,6 +321,7 @@ class Claim(commands.GroupCog, name="packs"):
 
     # Main /packly command to claim a ball after using a pack
     @app_commands.command(name="packly", description="Claim your footballer from the packly!")
+    @app_commands.checks.cooldown(1, 30, key=lambda i: i.user.id)
     async def packly(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
 
@@ -368,6 +397,7 @@ class Claim(commands.GroupCog, name="packs"):
 
     @app_commands.command(name="multipackly", description="Claim multiple footballers from the multipackly!")
     @app_commands.describe(packs="Number of packs to open (1-5)")
+    @app_commands.checks.cooldown(1, 25, key=lambda i: i.user.id)
     async def multipackly(self, interaction: discord.Interaction, packs: int):
         user_id = str(interaction.user.id)
 
@@ -428,13 +458,18 @@ class Claim(commands.GroupCog, name="packs"):
                 await interaction.followup.send("No footballers are available.", ephemeral=True)
                 return
 
-            attack_bonus = random.randint(-20, 20)
-            health_bonus = random.randint(-20, 20)
+            # Create an instance of the ball for the user
+            instance = await BallInstance.create(
+                ball=ball,
+                player=player,
+                attack_bonus=random.randint(-20, 20),
+                health_bonus=random.randint(-20, 20),
+            )
 
             # Create the walkout embed
             walkout_embed = discord.Embed(
                 title=f"🏆 You pulled {ball.country}!",
-                description=f"**Rarity:** {ball.rarity}\n⚽ **Attack:** {attack_bonus}\n❤️ **Health:** {health_bonus}",
+                description=f"**Rarity:** {ball.rarity}\n⚽ **Attack:** {ball.attack}\n❤️ **Health:** {ball.health}",
                 color=discord.Color.random()
             )
             walkout_embed.set_thumbnail(url=interaction.user.display_avatar.url)
@@ -522,7 +557,7 @@ class Claim(commands.GroupCog, name="packs"):
                     "- More packs gambled = lower chance to win.\n"
                     "- Win doubles your packs risked.\n"
                     "- Lose loses all gambled packs.\n"
-                    "- 12 hour cooldown between gambles.\n\n"
+                    "- 5 minute cooldown between gambles.\n\n"
                     "Good luck!"
                 ),
                 color=discord.Color.gold()
@@ -600,6 +635,7 @@ class Claim(commands.GroupCog, name="packs"):
 
     # Command to check wallet balance
     @app_commands.command(name="wallet", description="Check your wallet balance")
+    @app_commands.checks.cooldown(1, 10, key=lambda i: i.user.id)
     async def wallet(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         username = interaction.user.name

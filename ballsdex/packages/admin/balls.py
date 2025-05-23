@@ -4,9 +4,11 @@ import random
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from io import BytesIO
+from discord.ui import View, Button, button
 
 import discord
-from discord import app_commands
+from discord import app_commands, ui, Embed, Interaction, ButtonStyle
 from discord.utils import format_dt
 from tortoise.exceptions import BaseORMException, DoesNotExist
 
@@ -19,6 +21,7 @@ from ballsdex.core.utils.transformers import (
     EconomyTransform,
     RegimeTransform,
     SpecialTransform,
+    BallEnabledTransform,
 )
 from ballsdex.settings import settings
 
@@ -42,6 +45,47 @@ async def save_file(attachment: discord.Attachment) -> Path:
     await attachment.save(path)
     return path.relative_to("./admin_panel/media/")
 
+class GDropView(ui.View):
+    def __init__(self, ball_instance: BallInstance):
+        super().__init__(timeout=None)
+        self.ball_instance = ball_instance
+        self.claimed = False
+
+    @ui.button(label="Claim", style=discord.ButtonStyle.green, custom_id="gdrop_claim")
+    async def claim(self, interaction: discord.Interaction, button: ui.Button):
+        if self.claimed:
+            await interaction.response.send_message(
+                "This footballer has already been claimed.", ephemeral=True
+            )
+            return
+
+
+        player, _ = await Player.get_or_create(discord_id=interaction.user.id)
+        self.ball_instance.player = player
+        await self.ball_instance.save()
+
+        self.claimed = True
+
+        await interaction.response.send_message(
+            f"✅ You have claimed **{self.ball_instance}**!",
+            ephemeral=True
+        )
+
+        # 🔽 INSERTED EMBED UPDATE BLOCK HERE
+        embed = interaction.message.embeds[0]  # Get the original embed
+        embed.description = f"**{interaction.user.mention} claimed {self.ball_instance}!**"
+        embed.set_footer(text="Claimed!")
+
+        button.disabled = True
+        await interaction.message.edit(embed=embed, view=self)  # Edit message with new embed
+
+        
+
+
+async def give_to_user(self, user: discord.User):
+    new_owner = await Player.get_or_create(discord_id=user.id)
+    self.owner = new_owner[0]
+    await self.save()
 
 class Balls(app_commands.Group):
     """
@@ -420,6 +464,31 @@ class Balls(app_commands.Group):
             f"{interaction.user} transferred {ball}({ball.pk}) from {original_player} to {user}.",
             interaction.client,
         )
+
+    @app_commands.command(name="gdrop", description="Drop any footballer.")
+    @app_commands.checks.has_any_role(*settings.root_role_ids)
+    async def gdrop(self, interaction: Interaction, footballer: BallEnabledTransform):
+        await interaction.response.defer()
+
+        player = await Player.get_or_none(discord_id=interaction.user.id)
+        if not player:
+            player = await Player.create(discord_id=interaction.user.id)
+
+        ball_instance = await BallInstance.create(ball=footballer, player=player)
+
+        view = GDropView(ball_instance)  # 👈 Pass BallInstance
+    
+        embed = Embed(
+                title=f"{footballer} has been dropped!",
+                description=(
+                    f"⚽ Dropped by {interaction.user.mention}\n\n"
+                    f"Click the button below to claim **{footballer}**!\n"
+                    f"Rarity: **{footballer.rarity}**"
+                ),
+                color=0x2ECC71,
+            )
+
+        await interaction.followup.send(embed=embed, view=view)
 
     @app_commands.command(name="reset")
     @app_commands.checks.has_any_role(*settings.root_role_ids)
