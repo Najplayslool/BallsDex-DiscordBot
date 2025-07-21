@@ -204,8 +204,7 @@ class Profiles(commands.GroupCog, name="profile"):
                     "Welcome to your profile! Here's what you can do:\n"
                     "• Customize your bio and avatar\n"
                     "• Earn likes from others\n"
-                    "• View stats and post updates\n"
-                    "Try `/profile post` to get started!"
+                    "• View stats!\n"
                 ),
                 inline=False
             )

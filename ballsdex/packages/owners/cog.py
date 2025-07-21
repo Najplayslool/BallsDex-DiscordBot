@@ -36,10 +36,8 @@ from collections import defaultdict
 # -------
 
 # Owners who can give packs
-ownersid = {
-    767663084890226689,
-    749658746535280771
-}
+ownersid = 749658746535280771
+
 
 # Cooldowns
 DAILY_COOLDOWN = timedelta(hours=24)
@@ -151,7 +149,7 @@ class Owners(commands.GroupCog, name="owners"):
         content, file, view = await instance.prepare_for_message(interaction)
         embed.set_image(url="attachment://" + file.filename)
         embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        embed.set_footer(text="Come back in 24 hours for your next claim! • Made by drift")
+        embed.set_footer(text="Come back in 24 hours for your next claim!")
 
         await interaction.response.send_message(embed=embed, file=file, view=view)
         file.close()
@@ -183,7 +181,7 @@ class Owners(commands.GroupCog, name="owners"):
 
         # Walkout-style embed animation
         walkout_embed = discord.Embed(title="🎉 Weekly Pack Opening...", color=discord.Color.dark_gray())
-        walkout_embed.set_footer(text="Come back in 7 days for your next claim! • Made by drift")
+        walkout_embed.set_footer(text="Come back in 7 days for your next claim!")
         await interaction.response.defer()
         msg = await interaction.followup.send(embed=walkout_embed)
 
