@@ -212,7 +212,7 @@ class CoinFlip(commands.GroupCog, name="bet"):
             loser_id = next(pid for pid in players.keys() if pid != winner_id)
 
             # Log the result
-            log_channel_id = 981627349869142036
+            log_channel_id = 1341228457417248940
             log_channel = self.bot.get_channel(log_channel_id)
 
             if log_channel:
