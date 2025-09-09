@@ -1,7 +1,8 @@
 import enum
 import logging
 from typing import TYPE_CHECKING, cast
-
+import random
+from collections import defaultdict
 
 import discord
 from discord import Interaction
@@ -26,6 +27,7 @@ from ballsdex.core.utils.transformers import (
     BallInstanceTransform,
     SpecialEnabledTransform,
     TradeCommandType,
+    RegimeTransform,
 )
 from ballsdex.core.image_generator. image_gen import draw_card
 from ballsdex.core.utils.utils import inventory_privacy, is_staff
@@ -36,7 +38,6 @@ if TYPE_CHECKING:
     from ballsdex.core.bot import BallsDexBot
 
 log = logging.getLogger("ballsdex.packages.countryballs")
-
 
 class DonationRequest(View):
     def __init__(
@@ -201,6 +202,7 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         reverse: bool = False,
         countryball: BallEnabledTransform | None = None,
         special: SpecialEnabledTransform | None = None,
+        regime: RegimeTransform | None = None,
     ):
         """
         List your countryballs.
@@ -217,6 +219,8 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
             Filter the list by a specific countryball.
         special: Special
             Filter the list by a specific special event.
+        regime: Regime
+            Filter the list by a specific regime.
         """
         user_obj = user or interaction.user
         await interaction.response.defer(thinking=True)
@@ -252,11 +256,14 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
             query = query.filter(ball__id=countryball.pk)
         if special:
             query = query.filter(special=special)
+        if regime:
+            query = query.filter(ball__regime=regime)
         if sort:
             countryballs = await sort_balls(sort, query)
         else:
             countryballs = await query.order_by("-favorite")
 
+        regime_txt = str(regime) if regime else ""
         if len(countryballs) < 1:
             ball_txt = countryball.country if countryball else ""
             special_txt = special if special else ""
@@ -309,9 +316,7 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         special: Special
             The special you want to see the completion of
         """
-        user_obj = user or interaction.user
-        await interaction.response.defer(thinking=True)
-        extra_text = f"{special.name} " if special else ""
+        extra_text = f"{special.ballinstance} " if special else ""
         if user is not None:
             try:
                 player = await Player.get(discord_id=user_obj.id)
@@ -413,12 +418,39 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
 
         source = FieldPageSource(entries, per_page=5, inline=False, clear_description=False)
         special_str = f" ({special.name})" if special else ""
+        # Calculate completion percentage
+        completion_pct = round(len(owned_countryballs) / len(bot_countryballs) * 100, 1)
+
+        # Create a simple progress bar using block characters (max 10 blocks)
+        blocks_filled = int(completion_pct // 10)
+        blocks_empty = 10 - blocks_filled
+        progress_bar = "▰" * blocks_filled + "▱" * blocks_empty
+
+        # Friendly embed description with progress bar and emoji
         source.embed.description = (
-            f"{settings.bot_name}{special_str} progression: "
-            f"**{round(len(owned_countryballs) / len(bot_countryballs) * 100, 1)}%**"
+            f"**{settings.bot_name}{special_str} Completion:**\n"
+            f"{progress_bar}  {completion_pct}%\n\n"
+            f"Use the buttons below to flip pages and explore your collection!"
         )
-        source.embed.colour = discord.Colour.blurple()
-        source.embed.set_author(name=user_obj.display_name, icon_url=user_obj.display_avatar.url)
+
+        # Soothing blue-purple color
+        def random_colour():
+            # Pick a random bright-ish color by choosing RGB values between 100 and 255
+            r = random.randint(100, 255)
+            g = random.randint(100, 255)
+            b = random.randint(100, 255)
+            return discord.Colour.from_rgb(r, g, b)
+
+        source.embed.colour = random_colour()
+
+        # Show user nicely with their avatar
+        source.embed.set_author(
+            name=f"{user_obj.display_name}'s FootballDex Progress",
+            icon_url=user_obj.display_avatar.url
+        )
+
+        # Add a footer with a tip
+        source.embed.set_footer(text="Tip: Scroll through pages to see all your players!")
 
         pages = Pages(source=source, interaction=interaction, compact=True)
         await pages.start()
@@ -441,7 +473,7 @@ class Balls(commands.GroupCog, group_name=settings.players_group_cog_name):
         """
 
         # Filter enabled collectibles
-        enabledCollectibles = [x for x in balls.values() if x.enabled]
+        embededcollectiblesrarity = [x for x in balls.values() if x.enabled]
 
         # Group collectibles by rarity
         rarityToCollectibles = {}

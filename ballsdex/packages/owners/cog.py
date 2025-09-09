@@ -6,10 +6,12 @@ import random
 from tortoise import models, fields
 import logging
 import asyncio
+from tortoise.exceptions import DoesNotExist
 logger = logging.getLogger(__name__)
 from ballsdex.core.utils.transformers import (
     BallTransform,
     SpecialTransform,
+    SpecialEnabledTransform,
 )
 from ballsdex.core.models import (
     Ball,
@@ -158,8 +160,8 @@ class Owners(commands.GroupCog, name="owners"):
         await interaction.response.send_message(embed=embed, file=file, view=view)
         file.close()
 
-    @app_commands.command(name="weekly", description="Claim your weekly Footballer!")
-    async def weeklys(self, interaction: discord.Interaction[BallsDexBot]):
+    @app_commands.command(name="gweekly", description="Claim your weekly Footballer!")
+    async def gweeklys(self, interaction: discord.Interaction[BallsDexBot]):
         user_id = str(interaction.user.id)
         username = interaction.user.name
 
@@ -168,55 +170,121 @@ class Owners(commands.GroupCog, name="owners"):
                 "❌ You’re not allowed to use this command.", ephemeral=True)
             return
 
+        await interaction.response.defer()
 
-        player, _ = await Player.get_or_create(discord_id=str(interaction.user.id))
-        ball = await self.getdasigmaballmate(player)
+        player, _ = await Player.get_or_create(discord_id=user_id)
+        claimed_instances = []
 
-        if not ball:
-            await interaction.response.send_message("No footballers are available.", ephemeral=True)
+        for _ in range(amount):
+            ball = None
+
+            # Try for special ball
+            if random.random() < 0.25:
+                special_balls = await Ball.filter(rarity="Special").all()
+                if special_balls:
+                    ball = random.choice(special_balls)
+
+            # Fallback to regular
+            if not ball:
+                ball = await self.getdasigmaballmate(player)
+            
+            if not ball:
+                continue
+
+            instance = await BallInstance.create(
+                ball=ball,
+                player=player,
+                attack_bonus=random.randint(-20, 20),
+                health_bonus=random.randint(-20, 20),
+            )
+            claimed_instances.append((ball, instance))
+
+        if not claimed_instances:
+            await interaction.followup.send("No footballers are available.", ephemeral=True)
             return
 
-        instance = await BallInstance.create(
-            ball=ball,
-            player=player,
-            attack_bonus=random.randint(-20, 20),
-            health_bonus=random.randint(-20, 20),
+        embed = discord.Embed(
+            title=f"🎁 You got {len(claimed_instances)} footballer{'s' if len(claimed_instances) > 1 else ''}!",
+            color=discord.Color.dark_gray()
         )
+        embed.set_footer(text="Come back in 7 days for your next claim!")
+        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
-        # Walkout-style embed animation
-        walkout_embed = discord.Embed(title="🎉 Weekly Pack Opening...", color=discord.Color.dark_gray())
-        walkout_embed.set_footer(text="Come back in 7 days for your next claim!")
+        for instance in claimed_instances:
+            ball = instance.ball
+            emoji = self.bot.get_emoji(ball.emoji_id)
+            regime_name = ball.cached_regime.name if ball.cached_regime else "Unknown"
+            embed.add_field(
+                name=f"{emoji} **{ball.country}**",
+                value=(
+                    f"Rarity: `{ball.rarity}`\n"
+                    f"💳 Card: **{regime_name}**\n"
+                    f"💖 `{instance.health}` ⚽ `{instance.attack}`"
+                ),
+                inline=False,
+            )
+
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="gweekly", description="Claim your weekly Footballers! (1–10 at once)")
+    @app_commands.describe(amount="How many footballers to claim (1–10)")
+    async def gweeklys(self, interaction: discord.Interaction[BallsDexBot], amount: int = 1):
+        user_id = str(interaction.user.id)
+        username = interaction.user.name
+
+        if interaction.user.id not in ownersid:
+            await interaction.response.send_message(
+                "❌ You’re not allowed to use this command.", ephemeral=True)
+            return
+
+        if amount < 1 or amount > 10:
+            await interaction.response.send_message("❌ You can only claim between 1 and 10 footballers.", ephemeral=True)
+            return
+
         await interaction.response.defer()
-        msg = await interaction.followup.send(embed=walkout_embed)
 
-        await asyncio.sleep(1.5)
-        walkout_embed.description = f"✨ **Rarity:** `{ball.rarity}`"
-        await msg.edit(embed=walkout_embed)
+        player, _ = await Player.get_or_create(discord_id=user_id)
+        claimed_instances = []
 
-        await asyncio.sleep(1.5)
-        regime_name = ball.cached_regime.name if ball.cached_regime else "Unknown"
-        walkout_embed.description += f"\n💳 **Card:** **{regime_name}**"
-        await msg.edit(embed=walkout_embed)
+        for _ in range(amount):
+            ball = await self.getdasigmaballmate(player)
+            if not ball:
+                continue
 
-        await asyncio.sleep(1.5)
-        walkout_embed.description += f"\n💖 **Health:** `{instance.health}`\n⚽ **Attack:** `{instance.attack}`"
-        await msg.edit(embed=walkout_embed)
+            instance = await BallInstance.create(
+                ball=ball,
+                player=player,
+                attack_bonus=random.randint(-20, 20),
+                health_bonus=random.randint(-20, 20),
+            )
+            claimed_instances.append((ball, instance))
 
-        await asyncio.sleep(1.5)
-        emoji = self.bot.get_emoji(ball.emoji_id)
-        walkout_embed.title = f"🎁 You got **{ball.country}**!"
-        walkout_embed.color = discord.Color.from_rgb(229, 255, 0)  # You can randomize if you want
-        walkout_embed.add_field(
-            name=f"{emoji} **{ball.country}**",
-            value=f"Rarity: `{ball.rarity}`\n💖 `{instance.health}` ⚽ `{instance.attack}`"
+        if not claimed_instances:
+            await interaction.followup.send("No footballers are available.", ephemeral=True)
+            return
+
+        # Embed starts here
+        embed = discord.Embed(
+            title=f"🎁 You got {len(claimed_instances)} footballer{'s' if len(claimed_instances) > 1 else ''}!",
+            color=discord.Color.dark_gray()
         )
+        embed.set_footer(text="Come back in 7 days for your next claim!")
+        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
-        content, file, view = await instance.prepare_for_message(interaction)
-        walkout_embed.set_image(url="attachment://" + file.filename)
-        walkout_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+        for ball, instance in claimed_instances:
+            emoji = self.bot.get_emoji(ball.emoji_id)
+            regime_name = ball.cached_regime.name if ball.cached_regime else "Unknown"
+            embed.add_field(
+                name=f"{emoji} **{ball.country}**",
+                value=(
+                    f"Rarity: `{ball.rarity}`\n"
+                    f"💳 Card: **{regime_name}**\n"
+                    f"💖 `{instance.health}` ⚽ `{instance.attack}`"
+                ),
+                inline=False,
+            )
 
-        await msg.edit(embed=walkout_embed, attachments=[file], view=view)
-        file.close()
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="store", description="View the exclusive store packs.")
     async def store(self, interaction: discord.Interaction):

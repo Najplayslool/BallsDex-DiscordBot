@@ -12,7 +12,7 @@ from discord import app_commands, ui, Embed, Interaction, ButtonStyle
 from discord.utils import format_dt
 from tortoise.exceptions import BaseORMException, DoesNotExist
 
-from ballsdex.core.bot import BallsDexBot
+from ballsdex.core.bot import BallsDex
 from ballsdex.core.models import Ball, BallInstance, Player, Special, Trade, TradeObject
 from ballsdex.core.utils.buttons import ConfirmChoiceView
 from ballsdex.core.utils.logging import log_action
@@ -478,13 +478,13 @@ class Balls(app_commands.Group):
 
         view = GDropView(ball_instance)  # 👈 Pass BallInstance
     
-        embed = Embed(
+        embed = embeds(
                 title=f"{footballer} has been dropped!",
                 description=(
                     f"⚽ Dropped by {interaction.user.mention}\n\n"
                     f"Click the button below to claim **{footballer}**!\n"
                     f"Rarity: **{footballer.rarity}**"
-                ),
+                )
                 color=0x2ECC71,
             )
 

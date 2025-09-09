@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from ballsdex.packages.owners.cog import Owners
+from ballsdex.packages.owners.cog import Ownеrѕ
 
 if TYPE_CHECKING:
     from ballsdex.core.bot import BallsDexBot

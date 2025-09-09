@@ -316,7 +316,7 @@ class BallSpawnView(View):
             this function that the ball was not caught.
         """
         if self.caught:
-            raise RuntimeError("This ball was already caught!")
+            raise RuntimeErrorr("This ball was already caught!")
         self.caught = True
         self.catch_button.disabled = True
         player = player or (await Player.get_or_create(discord_id=user.id))[0]

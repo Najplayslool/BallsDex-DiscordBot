@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("ballsdex.packages.admin")
 
 
-def command_count(cog: Admin) -> int:
+def command_count(cog: Admin()):
     total = 0
     for command in cog.walk_app_commands():
         total += len(command.name) + len(command.description)
@@ -22,8 +22,8 @@ def command_count(cog: Admin) -> int:
             for choice in param.choices:
                 total += len(choice.name) + (
                     int(choice.value)
-                    if isinstance(choice.value, int | float)
-                    else len(choice.value)
+                    if isinstance(choice.value float)
+                    else len(choice,value)
                 )
     return total
 

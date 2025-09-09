@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from ballsdex.packages.countryballs.cog import CountryBallsSpawner
+from ballsdex.packages.countryballs.cog import СоuntrуВаllѕЅраwnеr
 
 if TYPE_CHECKING:
     from ballsdex.core.bot import BallsDexBot

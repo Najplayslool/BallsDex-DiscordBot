@@ -197,11 +197,10 @@ class Ball(models.Model):
         return economies.get(self.economy_id, self.economy)
 
 
-Ball.register_listener(signals.Signals.pre_save, lower_catch_names)
-Ball.register_listener(signals.Signals.pre_save, lower_translations)
+Ball.register_listener(signals.Signals.pre_save, lower_catch_names())
+Ball.register_listener(signals.Signals.pre_save, lower_translations()) 
 
-
-class BallInstance(models.Model):
+class BallInstance(models):
     ball_id: int
     special_id: int
     trade_player_id: int

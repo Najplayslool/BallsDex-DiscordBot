@@ -6,6 +6,8 @@ from discord import app_commands
 from discord.ext import commands
 import datetime
 from discord.ui import Button
+import psutil
+import platform
 
 from ballsdex.core.models import Ball, GuildConfig
 from ballsdex.core.utils.paginator import FieldPageSource, Pages, TextPageSource
@@ -259,3 +261,42 @@ class Admin(commands.GroupCog):
             )
         )
         await pages.start(ephemeral=True)
+
+    @commands.slash_command(name="bot_health", description="Check bot performance and stats.")
+    @app_commands.checks.has_any_role(*settings.root_role_ids, *settings.admin_role_ids)
+    async def bot_health(self, ctx: discord.ApplicationContext):
+        # Bot uptime
+        uptime_seconds = int(time.time() - start_time)
+        uptime_str = str(datetime.timedelta(seconds=uptime_seconds))
+
+        # System stats
+        cpu_usage = psutil.cpu_percent(interval=0.5)
+        memory = psutil.virtual_memory()
+        mem_usage_percent = memory.percent
+        mem_usage_mb = memory.used / 1024 / 1024
+
+        # Latency
+        latency = round(self.bot.latency * 1000)  # ms
+
+        # Extra info
+        python_version = platform.python_version()
+        discord_version = discord.__version__
+        guild_count = len(self.bot.guilds)
+        user_count = len(self.bot.users)
+
+        embed = discord.Embed(
+            title="⚡ Bot Health Status",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name="⏱ Uptime", value=f"`{uptime_str}`", inline=False)
+        embed.add_field(name="📡 Latency", value=f"`{latency} ms`", inline=True)
+        embed.add_field(name="🖥 CPU Usage", value=f"`{cpu_usage}%`", inline=True)
+        embed.add_field(name="💾 Memory Usage", value=f"`{mem_usage_percent}% ({mem_usage_mb:.0f} MB)`", inline=True)
+        embed.add_field(name="🌐 Servers", value=f"`{guild_count}`", inline=True)
+        embed.add_field(name="👥 Users Cached", value=f"`{user_count}`", inline=True)
+        embed.add_field(name="⚙️ Python/Discord.py", value=f"`{python_version} / {discord_version}`", inline=False)
+
+        embed.set_footer(text=f"Bot Health • {ctx.bot.user.name}", icon_url=ctx.bot.user.display_avatar.url)
+
+        await ctx.respond(embed=embed)
